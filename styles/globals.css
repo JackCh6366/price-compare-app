@@ -1,0 +1,31 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#__next {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+  background: #f5f5ef;
+  font-family: "Noto Sans TC", system-ui, sans-serif;
+  color: #1c1e1b;
+}
+
+.mono {
+  font-family: "Space Mono", monospace;
+}
+
+input:focus,
+textarea:focus {
+  outline: none;
+}
+
+::placeholder {
+  color: #a6a399;
+}
+
+button {
+  font-family: inherit;
+}
