@@ -58,12 +58,19 @@ ${productLines || "  （無或因 SPA/海報圖片未能直接取得）"}`;
       ? `\n\n【使用者於問題中附帶指定網址】：\n${urlsInQuestion.join("\n")}\n請特別使用 Google 搜尋工具檢索這些網址的最新活動與優惠資訊。`
       : "";
 
+  const prompt = `已分析網站資料：\n\n${siteDump}${urlPrompt}\n\n使用者問題：${question}`;
+
+  let reply = FALLBACK_REPLY;
+  let sources = [];
+  let isFreeTierLimited = false;
+
+  // 優先嘗試使用 Google Search Grounding 聯網搜尋
   try {
-    const model = genAI.getGenerativeModel({
+    const searchModel = genAI.getGenerativeModel({
       model: EXTRACTION_MODEL,
       tools: [
         {
-          googleSearch: {}, // 啟用 Gemini Google Search Grounding 聯網檢索
+          googleSearch: {}, // 啟用 Gemini Google Search Grounding
         },
       ],
       systemInstruction: `你是一個專業、誠實且貼心的商品優惠與比價助理。你具備即時 Google 搜尋聯網工具（googleSearch）。
@@ -82,15 +89,12 @@ ${productLines || "  （無或因 SPA/海報圖片未能直接取得）"}`;
    - 若經過聯網搜尋後仍完全查無任何相關活動，請禮貌回覆「${FALLBACK_REPLY}」。`,
     });
 
-    const prompt = `已分析網站資料：\n\n${siteDump}${urlPrompt}\n\n使用者問題：${question}`;
-    const result = await model.generateContent(prompt);
-
-    const reply = result.response.text()?.trim() || FALLBACK_REPLY;
+    const result = await searchModel.generateContent(prompt);
+    reply = result.response.text()?.trim() || FALLBACK_REPLY;
 
     // 擷取 Google 搜尋的參考來源連結（Grounding Metadata）
     const candidate = result.response.candidates?.[0];
     const groundingChunks = candidate?.groundingMetadata?.groundingChunks || [];
-    const sources = [];
     const seenUris = new Set();
 
     for (const chunk of groundingChunks) {
@@ -102,13 +106,38 @@ ${productLines || "  （無或因 SPA/海報圖片未能直接取得）"}`;
         });
       }
     }
+  } catch (searchErr) {
+    console.warn("Gemini Search Grounding unavailable:", searchErr?.status, searchErr?.message);
+    // 檢測是否為 429 Quota Exceeded（Google 免費方案未綁定信用卡時，搜尋工具額度為 0）
+    if (searchErr?.status === 429 || String(searchErr?.message).includes("429") || String(searchErr?.message).includes("quota")) {
+      isFreeTierLimited = true;
+    }
 
-    return res.status(200).json({ reply, sources });
-  } catch (err) {
-    console.error("Gemini chat error:", err?.status, err?.message || err);
-    return res.status(200).json({
-      reply: `AI 回覆時發生錯誤：${err?.message || "請稍後再試"}`,
-    });
+    // 降級容錯：改用標準模型回答，不帶 googleSearch 工具
+    try {
+      const standardModel = genAI.getGenerativeModel({
+        model: EXTRACTION_MODEL,
+        systemInstruction: `你是一個專業、誠實的比價助理。只能根據使用者提供的「已分析網站資料」或已知公開資訊回答問題，絕不編造任何虛假價格。
+規則：
+1. 若網站資料充足，請清楚整理出各網站的優惠與價格。
+2. 若網頁因 SPA/圖片導致靜態爬蟲未抓到文字，請誠實說明該網站因動態渲染或純海報圖片暫時無法由靜態爬蟲解析。
+3. 回答使用繁體中文，語氣親切有條理。`,
+      });
+
+      const standardResult = await standardModel.generateContent(prompt);
+      reply = standardResult.response.text()?.trim() || FALLBACK_REPLY;
+
+      if (isFreeTierLimited) {
+        reply += "\n\n*(💡 提示：您的 Google AI API 金鑰目前為未綁定帳單的免費方案（Free Tier），Google 限制即時 Google 搜尋聯網需要綁定 Billing 帳號；目前系統已自動為您切換至標準模型模式)*";
+      }
+    } catch (basicErr) {
+      console.error("Gemini standard chat error:", basicErr?.status, basicErr?.message || basicErr);
+      return res.status(200).json({
+        reply: `AI 回覆時發生錯誤：${basicErr?.message || "請稍後再試"}`,
+      });
+    }
   }
+
+  return res.status(200).json({ reply, sources });
 }
 
