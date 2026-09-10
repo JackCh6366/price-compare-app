@@ -1,5 +1,5 @@
 import { htmlToReadableText, extractTitle } from "../../lib/extractText";
-import { getAnthropicClient, EXTRACTION_MODEL } from "../../lib/anthropicClient";
+import { getGeminiClient, EXTRACTION_MODEL } from "../../lib/geminiClient";
 
 export const config = {
   api: { bodyParser: true },
@@ -8,11 +8,12 @@ export const config = {
 
 const FETCH_TIMEOUT_MS = 12000;
 
-const EXTRACT_TOOL = {
+// Gemini function declaration（等同 Anthropic tool schema）
+const EXTRACT_FUNCTION = {
   name: "record_site_offers",
   description:
     "記錄從網頁內容中找到的優惠與商品價格資訊。只能填入網頁內容中實際出現的資料，找不到就回傳空陣列，絕對不能編造或推測價格。",
-  input_schema: {
+  parameters: {
     type: "object",
     properties: {
       site_name: {
@@ -40,7 +41,10 @@ const EXTRACT_TOOL = {
           type: "object",
           properties: {
             name: { type: "string" },
-            price: { type: "number", description: "純數字價格，找不到明確數字就不要加入這筆" },
+            price: {
+              type: "number",
+              description: "純數字價格，找不到明確數字就不要加入這筆",
+            },
           },
           required: ["name", "price"],
         },
@@ -60,12 +64,12 @@ export default async function handler(req, res) {
     return res.status(400).json({ status: "failed", reason: "缺少網址" });
   }
 
-  const anthropic = getAnthropicClient();
-  if (!anthropic) {
+  const genAI = getGeminiClient();
+  if (!genAI) {
     return res.status(200).json({
       status: "failed",
       url,
-      reason: "尚未設定 ANTHROPIC_API_KEY 環境變數，無法進行內容解析",
+      reason: "尚未設定 GEMINI_API_KEY 環境變數，無法進行內容解析",
     });
   }
 
@@ -143,23 +147,27 @@ export default async function handler(req, res) {
   }
 
   try {
-    const message = await anthropic.messages.create({
+    const model = genAI.getGenerativeModel({
       model: EXTRACTION_MODEL,
-      max_tokens: 1500,
-      system:
-        "你是一個嚴謹的網頁優惠資訊擷取助手。只能根據使用者提供的網頁文字內容填寫工具參數，絕對不能自行編造、推測或補全任何價格與優惠。如果網頁內容中沒有明確的商品、價格或優惠資訊，offers 與 products 就回傳空陣列。",
-      messages: [
-        {
-          role: "user",
-          content: `以下是網站「${domain}」的網頁文字內容（節錄），請擷取其中的優惠活動與商品價格資訊：\n\n${pageText}`,
+      tools: [{ functionDeclarations: [EXTRACT_FUNCTION] }],
+      toolConfig: {
+        functionCallingConfig: {
+          mode: "ANY",
+          allowedFunctionNames: ["record_site_offers"],
         },
-      ],
-      tools: [EXTRACT_TOOL],
-      tool_choice: { type: "tool", name: "record_site_offers" },
+      },
+      systemInstruction:
+        "你是一個嚴謹的網頁優惠資訊擷取助手。只能根據使用者提供的網頁文字內容填寫工具參數，絕對不能自行編造、推測或補全任何價格與優惠。如果網頁內容中沒有明確的商品、價格或優惠資訊，offers 與 products 就回傳空陣列。",
     });
 
-    const toolUse = message.content.find((b) => b.type === "tool_use");
-    const parsed = toolUse?.input || { offers: [], products: [] };
+    const result = await model.generateContent(
+      `以下是網站「${domain}」的網頁文字內容（節錄），請擷取其中的優惠活動與商品價格資訊：\n\n${pageText}`
+    );
+
+    const response = result.response;
+    const candidate = response.candidates?.[0];
+    const functionCall = candidate?.content?.parts?.find((p) => p.functionCall)?.functionCall;
+    const parsed = functionCall?.args || { offers: [], products: [] };
 
     return res.status(200).json({
       status: "success",
@@ -170,11 +178,12 @@ export default async function handler(req, res) {
       products: Array.isArray(parsed.products) ? parsed.products.slice(0, 12) : [],
     });
   } catch (err) {
+    console.error("Gemini extraction error for", domain, ":", err?.status, err?.message || err);
     return res.status(200).json({
       status: "failed",
       url,
       domain,
-      reason: "模型解析網頁內容時發生錯誤，請稍後再試",
+      reason: `模型解析網頁內容時發生錯誤：${err?.status ? `HTTP ${err.status} ` : ""}${err?.message || "未知錯誤"}`,
     });
   }
 }
