@@ -440,7 +440,7 @@ function ResultView({ results, activeTab, setActiveTab, onReset }) {
 
       {activeTab === "offers" && <OffersTab successResults={successResults} />}
       {activeTab === "compare" && <CompareTab successResults={successResults} />}
-      {activeTab === "chat" && <ChatTab successResults={successResults} />}
+      {activeTab === "chat" && <ChatTab results={results} successResults={successResults} />}
     </div>
   );
 }
@@ -612,9 +612,12 @@ function cellStyle(isHeader) {
 
 /* ---- AI 對話 ---- */
 
-function ChatTab({ successResults }) {
+function ChatTab({ results = [], successResults = [] }) {
   const [messages, setMessages] = useState([
-    { role: "assistant", text: "您好，我是比價小幫手。可以問我目前已分析網站中的商品優惠喔！" },
+    {
+      role: "assistant",
+      text: "您好，我是比價小幫手！我具備即時 Google 搜尋聯網能力，您可以問我目前網站中的促銷細節、或貼上特定網址／活動詢問（例如萊爾富咖啡優惠）喔！",
+    },
   ]);
   const [input, setInput] = useState("");
   const [thinking, setThinking] = useState(false);
@@ -631,27 +634,39 @@ function ChatTab({ successResults }) {
     setInput("");
     setThinking(true);
     try {
+      const allSites = results && results.length > 0 ? results : successResults;
       const resp = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           question: text,
-          sites: successResults.map((r) => ({
+          sites: allSites.map((r) => ({
+            url: r.url,
             domain: r.domain,
             siteName: r.siteName,
             offers: r.offers,
             products: r.products,
+            note: r.note,
+            status: r.status,
+            reason: r.reason,
           })),
         }),
       });
       const data = await resp.json();
-      setMessages((m) => [...m, { role: "assistant", text: data.reply || FALLBACK_REPLY }]);
+      setMessages((m) => [
+        ...m,
+        {
+          role: "assistant",
+          text: data.reply || FALLBACK_REPLY,
+          sources: data.sources || [],
+        },
+      ]);
     } catch {
       setMessages((m) => [...m, { role: "assistant", text: "呼叫 AI 對話服務失敗，請稍後再試。" }]);
     } finally {
       setThinking(false);
     }
-  }, [input, successResults]);
+  }, [input, results, successResults]);
 
   return (
     <div
@@ -661,15 +676,15 @@ function ChatTab({ successResults }) {
         borderRadius: 14,
         display: "flex",
         flexDirection: "column",
-        height: 480,
-        maxHeight: "70vh",
+        height: 520,
+        maxHeight: "75vh",
       }}
     >
       <div style={{ flex: 1, overflowY: "auto", padding: 18, display: "flex", flexDirection: "column", gap: 14 }}>
         {messages.map((m, i) => (
-          <ChatBubble key={i} role={m.role} text={m.text} />
+          <ChatBubble key={i} role={m.role} text={m.text} sources={m.sources} />
         ))}
-        {thinking && <ChatBubble role="assistant" text="思考中…" thinking />}
+        {thinking && <ChatBubble role="assistant" text="正在檢索分析與聯網搜尋中…" thinking />}
         <div ref={bottomRef} />
       </div>
       <div style={{ borderTop: "1px solid #E4E1D5", padding: 12, display: "flex", gap: 8 }}>
@@ -677,7 +692,7 @@ function ChatTab({ successResults }) {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && send()}
-          placeholder="例如：高麗菜哪裡最便宜？"
+          placeholder="例如：大杯拿鐵有什麼優惠？或貼入促銷網址查詢"
           style={{ flex: 1, border: "1px solid #E4E1D5", borderRadius: 10, padding: "10px 14px", fontSize: 14, background: "#FBFAF6" }}
         />
         <button
@@ -702,7 +717,7 @@ function ChatTab({ successResults }) {
   );
 }
 
-function ChatBubble({ role, text, thinking }) {
+function ChatBubble({ role, text, thinking, sources = [] }) {
   const isUser = role === "user";
   return (
     <div style={{ display: "flex", gap: 8, flexDirection: isUser ? "row-reverse" : "row" }}>
@@ -727,13 +742,42 @@ function ChatBubble({ role, text, thinking }) {
           borderRadius: 12,
           fontSize: 13.5,
           lineHeight: 1.6,
-          whiteSpace: "pre-line",
           background: isUser ? "#14532D" : "#F5F5EF",
           color: isUser ? "#F5F5EF" : "#1C1E1B",
           opacity: thinking ? 0.6 : 1,
         }}
       >
-        {text}
+        <div style={{ whiteSpace: "pre-line" }}>{text}</div>
+        {!isUser && sources && sources.length > 0 && (
+          <div style={{ marginTop: 10, paddingTop: 8, borderTop: "1px dashed #D8D5C9", fontSize: 12 }}>
+            <span style={{ color: "#777468", fontWeight: 600 }}>🌐 即時參考來源：</span>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
+              {sources.map((s, idx) => (
+                <a
+                  key={idx}
+                  href={s.uri}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 4,
+                    padding: "3px 8px",
+                    borderRadius: 6,
+                    background: "#FFFFFF",
+                    border: "1px solid #D8D5C9",
+                    color: "#14532D",
+                    textDecoration: "none",
+                    fontSize: 11.5,
+                  }}
+                >
+                  <Link2 size={11} />
+                  <span>{s.title || s.uri}</span>
+                </a>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
