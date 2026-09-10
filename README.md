@@ -41,7 +41,7 @@ vercel
 - **Vercel 免費方案（Hobby）的 Serverless Function 執行時間上限是 10 秒**，本專案設定的逾時時間（12 秒的抓取 timeout）已經超過這個上限；若要跑得比較穩，建議升級到 Pro 方案，或把 `pages/api/analyze.js` 裡的 `FETCH_TIMEOUT_MS` 調低。
 - **同規格比價是「名稱字串比對」**，不是真正理解商品語意，如果兩個網站把同個商品寫成不同名稱，就不會自動歸在同一列。
 - **請留意各網站的服務條款與 robots.txt**，避免違反使用規範；本專案只做基本的網頁抓取，沒有繞過任何登入或反爬蟲機制。
-- 使用的模型是 `gemini-2.0-flash`（速度快、成本低、結構化提取能力強），如果需要換模型，可以在 `lib/geminiClient.js` 修改 `EXTRACTION_MODEL`。
+- 使用的模型是 `gemini-3.6-flash`（速度快、成本低、結構化提取與聯網能力強），如果需要換模型，可以在 `lib/geminiClient.js` 修改 `EXTRACTION_MODEL`。
 
 ## 專案結構
 
